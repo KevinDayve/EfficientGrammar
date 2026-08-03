@@ -43,8 +43,16 @@ python distill/prepare_bea.py --m2 "wi+locness/m2/*train*.m2" --out distill/data
 python distill/prepare_bea.py --m2 "wi+locness/m2/*dev*.m2"   --out distill/data/dev.tsv
 ```
 `prepare_bea.py` applies the gold M2 edits to reconstruct `source<TAB>target` pairs.
-Optional: add FCE / NUCLE / cLang8 the same way if you have access (more data helps).
 For the precision mandate you can later mix in identity pairs with `--keep-identity`.
+
+**More data — Lang-8 v1.0** (raw, form-gated; noisier than cLang8, but big):
+```bash
+unzip -o distill/data/lang-8-en-1.0.zip -d distill/data/
+python distill/prepare_lang8.py --entries distill/data/lang-8-en-1.0/entries.train \
+                                --out distill/data/lang8.tsv
+cat distill/data/lang8.tsv >> distill/data/train.tsv     # append to the BEA pairs
+```
+(Optional: FCE / NUCLE / cLang8 the same way if you have access.)
 
 ## 2. Smoke test on GPU (validates the *real* teacher/student + your env)
 ```bash
