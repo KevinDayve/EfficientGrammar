@@ -1,0 +1,12 @@
+# --- Runtime dependencies (CPU, no LLM, no torch) ---
+# The production serving path needs ONLY these. Torch is NOT required at
+# inference time -- that is the whole point of using CTranslate2.
+ctranslate2>=4.0
+sentencepiece>=0.2
+transformers>=4.40        # tokenizer only (does not import torch unless a model is loaded)
+symspellpy>=6.7           # fast Symmetric-Delete spell correction (NOT the older `symspell`)
+huggingface_hub>=0.20
+
+# --- demo/serving (serve.py) ---
+fastapi>=0.110
+uvicorn[standard]>=0.29

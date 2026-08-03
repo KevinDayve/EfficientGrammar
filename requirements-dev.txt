@@ -1,0 +1,20 @@
+# --- Dev / offline dependencies ---
+# Needed only to CONVERT HuggingFace models into the CTranslate2 format and to
+# run evaluation. None of this ships to the inference servers.
+-r requirements.txt
+
+# CPU build of torch. Install with:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0
+
+# CTranslate2 >=4.8's converter passes the `dtype` kwarg, which transformers
+# <4.56 does not understand (it forwards it into the T5 constructor and crashes).
+# Conversion therefore needs a newer transformers than the >=4.40 runtime floor.
+transformers>=4.56
+
+pytest>=7.0
+matplotlib>=3.7        # bench/plot_report.py (charts for the writeup)
+
+# distillation (distill/train_distill.py) — GPU machine
+datasets>=2.14
+accelerate>=0.30

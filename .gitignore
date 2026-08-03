@@ -1,0 +1,31 @@
+# virtualenvs
+.grammar/
+.venv/
+venv/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# generated / downloaded artifacts (large, reproducible)
+data/models/*
+!data/models/.gitkeep
+data/dictionaries/*
+!data/dictionaries/.gitkeep
+
+# env & logs
+.env
+*.log
+
+# training / distillation (large data + run outputs stay local)
+runs/
+distill/data/*.tsv
+!distill/data/smoke.tsv
+wi+locness/
+*.tar.gz
+
+# internal eval data — do NOT publish; transfer to the VM separately
+data/*.csv
