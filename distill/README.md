@@ -85,6 +85,26 @@ python bench/report.py                                # throughput (must hold >=
 python serve.py                                       # demo now runs the distilled model
 ```
 
+## 5. Try a different student size (e.g. `small` for more capacity)
+Same flow, different `--student`, and its **own model slot** (keeps `mini` for
+comparison — no code change; the pipeline loads by directory, not the HF key):
+```bash
+python distill/train_distill.py --train distill/data/train.tsv --eval distill/data/dev.tsv \
+  --student google/t5-efficient-small --teacher vennify/t5-base-grammar-correction \
+  --out runs/distill-small --epochs 3 --alpha 0.7 --temperature 2.0        # -> runs/distill-small/
+
+ct2-transformers-converter --model runs/distill-small \
+  --output_dir data/models/t5-efficient-small-ct2-int8 --quantization int8 --force
+python -c "from transformers import AutoTokenizer; \
+  AutoTokenizer.from_pretrained('runs/distill-small').save_pretrained('data/models/t5-efficient-small-ct2-int8')"
+
+python bench/eval_dataset.py --model small --beam 2   # CORE quality (vs mini 50.6%, teacher 74.4%)
+python bench/report.py --models small                 # throughput  (must hold >=250 rps)
+```
+Note: `google/t5-efficient-small` is **not** grammar-pretrained (unlike
+visheratin-mini), so on BEA-alone it may lag mini — pair with cLang8 (§1) if so.
+And watch throughput: `small` (60M) is ~2× `mini`'s compute.
+
 ## Success bar
 - CORE normalized-match **well above 45.8%** (target: 70s), char-sim **net-positive**
   (> 0.937 raw-input baseline), **≥250 req/s** int8 on CPU.
