@@ -20,8 +20,13 @@
 
 ## 0. Environment (on the VM)
 ```bash
-git clone https://github.com/KevinDayve/EfficientGrammar.git
-cd EfficientGrammar
+# The eval CSV is already at /home/ubuntu/EmailGrammar/data/. To make that dir the
+# repo (git clone refuses a non-empty dir), pull into it instead of cloning:
+cd /home/ubuntu/EmailGrammar
+git init && git remote add origin git@github.com:KevinDayve/EfficientGrammar.git
+git fetch origin && git reset --hard origin/main   # data/ CSV is gitignored -> preserved
+# (or just clone elsewhere and cp the CSV into <repo>/data/)
+
 python -m venv .grammar && source .grammar/bin/activate
 pip install -r requirements-dev.txt          # transformers, datasets, accelerate, ctranslate2, ...
 # IMPORTANT: replace the CPU torch with a CUDA build for your VM's CUDA version:
@@ -62,9 +67,10 @@ Tuning (precision-first): `--alpha` (KL vs CE), `--temperature`, and student siz
 try `--student google/t5-efficient-small` for more capacity if it still holds ≥250 rps.
 
 > **Eval data note:** `bench/eval_dataset.py` reads `data/t5_8bit_fully_trained_check.csv`
-> (the 589-row CORE eval set). It is **internal data, deliberately kept out of this
-> repo** — Kevin will copy it to `data/` on the VM. Without it you can still train +
-> convert; you just can't run the CORE eval until it's present.
+> (the 589-row CORE eval set). It is **internal data, kept out of this repo**, but it
+> has already been **copied to the VM at `/home/ubuntu/EmailGrammar/data/`**. If you
+> clone the repo to a *different* directory, copy it in:
+> `cp /home/ubuntu/EmailGrammar/data/t5_8bit_fully_trained_check.csv <repo>/data/`.
 
 ## 4. Convert → CPU runtime, then eval (turnkey: overwrite the "mini" slot)
 ```bash
