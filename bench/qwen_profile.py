@@ -17,8 +17,8 @@ Examples
   # Qwen3-0.6B, 4-bit quantized (needs bitsandbytes + a CUDA GPU)
   python bench/qwen_profile.py --model-id Qwen/Qwen3-0.6B --quant 4bit
 
-  # Qwen3-4B-Instruct-2507-FP8 (already FP8; load as-is on a recent GPU)
-  python bench/qwen_profile.py --model-id Qwen/Qwen3-4B-Instruct-2507-FP8 --quant none
+  # Qwen3-4B-Instruct-2507-FP8 — block-FP8, MUST use the vLLM backend (see notes)
+  python bench/qwen_profile.py --model-id Qwen/Qwen3-4B-Instruct-2507-FP8 --backend vllm
 
 Notes
 -----
@@ -26,10 +26,12 @@ Notes
   by default; that would wreck the output. The 2507-Instruct models are already
   non-thinking, so the flag is a harmless no-op there. We also strip any stray
   <think> block defensively.
-* The FP8 checkpoint needs a recent transformers (>=4.54) and a GPU with FP8
-  support (Hopper/Ada) or on-the-fly dequant; if transformers struggles with it,
-  run that one under vLLM — the metric code here is model-agnostic and you can
-  feed it predictions, but the built-in path uses transformers.
+* --backend {hf,vllm}. The default `hf` (transformers) cannot correctly load the
+  Qwen block-FP8 checkpoints: their scales are named `weight_scale_inv`, which the
+  transformers FineGrainedFP8 loader does not map, so it drops them and runs garbage
+  weights (0% match, every sentence "changed" — the guard will shout). Use
+  `--backend vllm` for those; vLLM supports block-FP8 natively (and runs FP8 on
+  Ampere via its Marlin kernel). Needs: pip install vllm.
 * --quant {8bit,4bit} uses bitsandbytes (8bit = INT8 LLM.int8(), 4bit = NF4), so it
   is INT-based, not FP8. Needs: pip install bitsandbytes. It is auto-skipped for a
   checkpoint that is already quantized (e.g. an -FP8 model with FineGrainedFP8Config),
@@ -166,13 +168,47 @@ def generate(model, tok, batch: list[str], max_new_tokens: int) -> list[str]:
     return [clean(t) for t in tok.batch_decode(gen, skip_special_tokens=True)]
 
 
+def run_hf(args, srcs: list[str]) -> tuple[list[str], float]:
+    """Transformers backend: batched greedy generation."""
+    model, tok = build_model(args)
+    preds: list[str] = []
+    t0 = time.perf_counter()
+    for k in range(0, len(srcs), args.batch_size):
+        preds.extend(generate(model, tok, srcs[k:k + args.batch_size], args.max_new_tokens))
+        print(f"  ...{min(k + args.batch_size, len(srcs))}/{len(srcs)}", end="\r", flush=True)
+    return preds, time.perf_counter() - t0
+
+
+def run_vllm(args, srcs: list[str]) -> tuple[list[str], float]:
+    """vLLM backend: required for block-FP8 checkpoints. vLLM batches internally."""
+    from vllm import LLM, SamplingParams
+
+    llm = LLM(model=args.model_id, dtype="auto", trust_remote_code=True,
+              max_model_len=args.max_model_len,
+              gpu_memory_utilization=args.gpu_mem_util)
+    sp = SamplingParams(temperature=0.0, max_tokens=args.max_new_tokens)  # greedy
+    convs = [[{"role": "system", "content": SYSTEM_PROMPT},
+              {"role": "user", "content": s}] for s in srcs]
+    t0 = time.perf_counter()
+    try:
+        outs = llm.chat(convs, sp, chat_template_kwargs={"enable_thinking": False})
+    except TypeError:                                  # older vLLM without the kwarg
+        outs = llm.chat(convs, sp)
+    dt = time.perf_counter() - t0
+    return [clean(o.outputs[0].text) for o in outs], dt
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-id", default="Qwen/Qwen3-0.6B")
     ap.add_argument("--quant", choices=["none", "8bit", "4bit"], default="4bit",
                     help="bitsandbytes quant on load (8bit=INT8 LLM.int8, 4bit=NF4); "
                          "'none' loads as-is. Auto-ignored for already-quantized (FP8) checkpoints.")
-    ap.add_argument("--device", default="auto", help="device_map (auto|cpu|cuda:0)")
+    ap.add_argument("--backend", choices=["hf", "vllm"], default="hf",
+                    help="hf=transformers (default); vllm required for block-FP8 checkpoints")
+    ap.add_argument("--device", default="auto", help="device_map (auto|cpu|cuda:0); hf backend")
+    ap.add_argument("--max-model-len", type=int, default=2048, help="vLLM context length")
+    ap.add_argument("--gpu-mem-util", type=float, default=0.90, help="vLLM gpu_memory_utilization")
     ap.add_argument("--csv", default="data/t5_8bit_fully_trained_check.csv")
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--max-new-tokens", type=int, default=128)
@@ -188,14 +224,7 @@ def main() -> None:
     srcs = [i for i, _ in core]
     golds = [g for _, g in core]
 
-    model, tok = build_model(args)
-
-    preds: list[str] = []
-    t0 = time.perf_counter()
-    for k in range(0, len(srcs), args.batch_size):
-        preds.extend(generate(model, tok, srcs[k:k + args.batch_size], args.max_new_tokens))
-        print(f"  ...{min(k + args.batch_size, len(srcs))}/{len(srcs)}", end="\r", flush=True)
-    dt = time.perf_counter() - t0
+    preds, dt = run_vllm(args, srcs) if args.backend == "vllm" else run_hf(args, srcs)
 
     n = len(core)
     changed = improved = regressed = lateral = exact_edit = 0
@@ -221,7 +250,8 @@ def main() -> None:
     c = max(changed, 1)
     match = sum(norm(p) == norm(g) for p, g in zip(preds, golds)) / n * 100
 
-    tag = f"{args.model_id} ({args.quant})"
+    scheme = args.quant if args.backend == "hf" else "native"
+    tag = f"{args.model_id} ({scheme}, {args.backend})"
     print(f"\n\n=== Qwen profile — {tag} — CORE n={n} ===")
     print(f"  normalized-match (scoreboard 'exact-match') : {match:5.1f}%")
     print(f"  left UNCHANGED (safe miss)                  : {unchanged:3d}  ({100*unchanged/n:4.0f}%)")

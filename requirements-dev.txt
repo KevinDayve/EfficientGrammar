@@ -20,8 +20,10 @@ datasets>=2.14
 accelerate>=0.30
 
 # Qwen3 benchmarking (bench/qwen_profile.py) — GPU machine, NOT a runtime dep.
-# bitsandbytes is only needed for --quant {8bit,4bit} (e.g. Qwen3-0.6B). The
-# already-FP8 checkpoint (Qwen3-4B-Instruct-2507-FP8) needs transformers>=4.54
-# and a GPU with FP8 support (Hopper/Ada); run it under vLLM if transformers
-# cannot load the FP8 weights.
+# bitsandbytes: only for --quant {8bit,4bit} (INT8/NF4), e.g. Qwen3-0.6B.
 bitsandbytes>=0.43
+# vLLM: required for the block-FP8 checkpoints (e.g. Qwen3-4B-Instruct-2507-FP8).
+# transformers cannot load their `weight_scale_inv` scales and runs garbage weights;
+# use `--backend vllm`. Heavy dep, install only if benchmarking an FP8 model.
+#   pip install vllm
+# vllm>=0.6
