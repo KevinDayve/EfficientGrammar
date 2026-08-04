@@ -6,6 +6,7 @@ toward the gold) vs HURT (move away)? And how often does it correctly leave text
 alone? This reports that.
 
     python bench/error_profile.py --model mini --beam 2
+    python bench/error_profile.py --model mini --dump-regressions regressions.csv
 """
 from __future__ import annotations
 
@@ -31,6 +32,8 @@ def main() -> None:
     ap.add_argument("--beam", type=int, default=2)
     ap.add_argument("--csv", default="data/t5_8bit_fully_trained_check.csv")
     ap.add_argument("--eps", type=float, default=0.01)
+    ap.add_argument("--dump-regressions", nargs="?", const="regressions.csv", default=None,
+                    help="write the away-from-gold edits to a CSV to eyeball (input/output/gold)")
     args = ap.parse_args()
 
     rows = list(csv.DictReader(open(args.csv, encoding="utf-8", errors="replace")))
@@ -41,6 +44,7 @@ def main() -> None:
 
     n = len(core)
     changed = improved = regressed = lateral = exact_edit = 0
+    regs: list[dict] = []
     for (inp, gold), out in zip(core, outs):
         ni, no, ng = norm(inp), norm(out), norm(gold)
         if no == ni:
@@ -53,6 +57,8 @@ def main() -> None:
             improved += 1
         elif so < si - args.eps:
             regressed += 1
+            regs.append({"input": inp, "model_output": out, "gold": gold,
+                         "sim_in": round(si, 3), "sim_out": round(so, 3)})
         else:
             lateral += 1
 
@@ -68,6 +74,19 @@ def main() -> None:
     print(f"\n  EDIT PRECISION (improved / edited) = {100*improved/c:.1f}%  <- the mandate's number")
     print("  note: 'regressed' = moved away from the SINGLE gold string; some are")
     print("  valid alternative corrections, so this OVER-counts true errors.")
+
+    if args.dump_regressions:
+        out_path = Path(args.dump_regressions)
+        with out_path.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["input", "model_output", "gold", "sim_in", "sim_out"])
+            w.writeheader()
+            w.writerows(regs)
+        print(f"\n  wrote {len(regs)} regressions -> {out_path}  (judge these: how many are")
+        print("  genuinely wrong vs. valid alternatives? that is your TRUE error rate)")
+        for r in regs[:5]:
+            print(f"    in : {r['input']}")
+            print(f"    out: {r['model_output']}")
+            print(f"    ref: {r['gold']}\n")
 
 
 if __name__ == "__main__":
