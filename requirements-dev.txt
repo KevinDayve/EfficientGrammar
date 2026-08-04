@@ -18,3 +18,10 @@ matplotlib>=3.7        # bench/plot_report.py (charts for the writeup)
 # distillation (distill/train_distill.py) — GPU machine
 datasets>=2.14
 accelerate>=0.30
+
+# Qwen3 benchmarking (bench/qwen_profile.py) — GPU machine, NOT a runtime dep.
+# bitsandbytes is only needed for --quant {8bit,4bit} (e.g. Qwen3-0.6B). The
+# already-FP8 checkpoint (Qwen3-4B-Instruct-2507-FP8) needs transformers>=4.54
+# and a GPU with FP8 support (Hopper/Ada); run it under vLLM if transformers
+# cannot load the FP8 weights.
+bitsandbytes>=0.43
