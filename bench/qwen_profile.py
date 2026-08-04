@@ -31,7 +31,10 @@ Notes
   transformers FineGrainedFP8 loader does not map, so it drops them and runs garbage
   weights (0% match, every sentence "changed" — the guard will shout). Use
   `--backend vllm` for those; vLLM supports block-FP8 natively (and runs FP8 on
-  Ampere via its Marlin kernel). Needs: pip install vllm.
+  Ampere via its Marlin kernel). Needs: pip install vllm. If vLLM crashes in warmup
+  with "Could not find nvcc" (FlashInfer JIT-compiling its sampler on a box that has
+  the CUDA runtime but not the toolkit), we already set VLLM_USE_FLASHINFER_SAMPLER=0
+  to use the native torch sampler; if it still trips, `pip uninstall flashinfer`.
 * --quant {8bit,4bit} uses bitsandbytes (8bit = INT8 LLM.int8(), 4bit = NF4), so it
   is INT-based, not FP8. Needs: pip install bitsandbytes. It is auto-skipped for a
   checkpoint that is already quantized (e.g. an -FP8 model with FineGrainedFP8Config),
@@ -181,6 +184,14 @@ def run_hf(args, srcs: list[str]) -> tuple[list[str], float]:
 
 def run_vllm(args, srcs: list[str]) -> tuple[list[str], float]:
     """vLLM backend: required for block-FP8 checkpoints. vLLM batches internally."""
+    import os
+
+    # FlashInfer JIT-compiles its sampler kernel with nvcc. A box can have the CUDA
+    # *runtime* (torch works) but not the *toolkit* (no nvcc), which crashes vLLM's
+    # warmup. We decode greedily, so vLLM's native torch sampler is equivalent —
+    # force it and skip the JIT entirely. (Env vars are read by the engine subprocess
+    # on spawn, so this must be set before `import vllm`.)
+    os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
     from vllm import LLM, SamplingParams
 
     llm = LLM(model=args.model_id, dtype="auto", trust_remote_code=True,
