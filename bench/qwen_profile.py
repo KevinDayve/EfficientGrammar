@@ -220,6 +220,13 @@ def main() -> None:
     print("  note: 'regressed' is vs a single gold string, so it OVER-counts true")
     print("  errors; dump and hand-review to get the real rate (as we did for T5).")
 
+    if match == 0.0 and changed == n and improved == 0:
+        print("\n  !! WARNING: 0% match, every sentence changed, none improved.")
+        print("  !! This almost always means the model loaded WRONG, not that it is bad")
+        print("  !! -- e.g. FP8 scales silently dropped ('weight_scale_inv UNEXPECTED').")
+        print("  !! Upgrade transformers (>=4.56) or run the checkpoint under vLLM, or")
+        print("  !! benchmark the non-FP8 checkpoint with --quant 8bit. Do NOT trust this run.")
+
     if args.dump_regressions:
         out_path = Path(args.dump_regressions)
         with out_path.open("w", newline="", encoding="utf-8") as f:

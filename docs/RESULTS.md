@@ -88,15 +88,33 @@ caught noticeably less. The takeaway is durable: for a precision-first tool, the
 *style* of the training data matters more than the quantity; more data of the wrong
 style is a liability.
 
-### 3.5 Qwen3-0.6B
+### 3.5 Qwen3
 
-Because the priority is making no mistakes, and a 0.6B general-purpose model is now
-cleared for production, we are benchmarking Qwen3-0.6B on the hypothesis that a larger,
-better-calibrated model errs less. Two questions decide it, and we measure both:
-**throughput** — a 0.6B model decodes token by token and is a real risk against the
-CPU throughput target — and **behaviour** — language models tend to over-rewrite,
-which could *increase* wrong suggestions unless tightly constrained. We judge it on
-the same precision-and-throughput lens as everything else, not on accuracy alone.
+Management asked whether a general-purpose language model would simply make fewer
+mistakes than T5, and cleared Qwen3-0.6B for production, so we benchmarked it on the
+same set under the same metrics (8-bit quantized, raw model, no guards). The headline
+looks competitive — 44.2% exact-match and ~70% edit precision over 26 flagged
+regressions — but reading those regressions tells a different and decisive story.
+
+The T5 model's wrong suggestions were mostly benign — an expanded contraction, a
+comma where the reference used a semicolon. Qwen's are not: it **over-rewrites and
+drops content**. It deleted `definitely` instead of correcting it, cut "having been
+delayed" out of a sentence, turned `What's the matter?` into `matter`, and shortened
+an already-correct sentence by removing "last summer". On a hand review, about sixteen
+of the twenty-six are genuine errors — a **~5.2% true rate, higher than the distilled
+T5's ~3.6%**, and of the one kind the product must never commit: changing the meaning.
+This is exactly the over-rewriting risk we anticipated, and at 0.6B a confidence gate
+cannot rescue it, because the model is *confidently* paraphrasing. So the language
+model was not less error-prone; on our mandate it was worse.
+
+The larger Qwen3-4B-Instruct-2507 (FP8) may behave differently — a bigger model tends
+to paraphrase more faithfully — so that benchmark is worth finishing. It is pending a
+runtime fix: the FP8 checkpoint needs a newer inference stack than the eval box had,
+and the quantization scales were silently dropped on load, producing garbage output
+rather than a real score. We will fold its numbers in once it runs cleanly. Throughput
+is a separate open question for both — a token-by-token decoder is a real risk against
+the CPU target, and the honest number needs an int8/GGUF conversion, not the GPU
+figure the benchmark prints.
 
 ## 4. A closer look at the wrong suggestions
 
@@ -162,10 +180,10 @@ v1 behind the suggestion interface.
 The number we optimize from here is that error rate, driven down with confidence
 gating, with coverage as the thing we trade away. The highest-value next steps are:
 turn on confidence gating, aimed first at the homophone confusions §4 identifies;
-extend the entity guard to lowercase acronyms; finish the Qwen benchmark; and — the
-best data we can get — collect real user accept/reject signal once the feature is
-live, which is perfectly in-domain and in-style and will move the model further than
-any public corpus.
+extend the entity guard to lowercase acronyms; finish the 4B Qwen benchmark (the 0.6B
+is done — it over-rewrites, §3.5); and — the best data we can get — collect real user
+accept/reject signal once the feature is live, which is perfectly in-domain and
+in-style and will move the model further than any public corpus.
 
 ## 7. Results
 
@@ -180,7 +198,8 @@ edits that improve the sentence; "wrong (≤)" is the upper bound on wrong sugge
 | + raw Lang-8 | 42.5% | ~67% | 48% | 34 | wrong data style |
 | GECToR (roberta-base) | 36.7% | ~43% | 64% | 68 | worse + ~25× slower |
 | Teacher — vennify/t5-base (~220M) | 74.4% | — | — | — | can't ship: **licensing** |
-| Qwen3-0.6B (600M) | — | — | — | — | under evaluation |
+| Qwen3-0.6B (600M, 8-bit) | 44.2% | ~70% | 44% | 26 | over-rewrites; ~16 true errors |
+| Qwen3-4B-Instruct (FP8) | — | — | — | — | benchmark pending (FP8 runtime) |
 
 ## 8. Reproducing these numbers
 
