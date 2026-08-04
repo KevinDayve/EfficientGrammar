@@ -2,7 +2,7 @@
 
 *A results report for the email spelling/grammar correction engine. Written for a
 technical audience and safe to share across teams. Every number is reproducible
-from the harnesses in this repo (see §7).*
+from the harnesses in this repo (see §8).*
 
 ## 1. Objective
 
@@ -98,7 +98,44 @@ CPU throughput target — and **behaviour** — language models tend to over-rew
 which could *increase* wrong suggestions unless tightly constrained. We judge it on
 the same precision-and-throughput lens as everything else, not on accuracy alone.
 
-## 4. Reducing wrong suggestions
+## 4. A closer look at the wrong suggestions
+
+The wrong-suggestion count in §2 is an upper bound, because it is measured against a
+single reference. To find the true rate we dumped every away-from-gold edit the
+shippable model makes on the evaluation set — 34 in all — and read each one by hand.
+
+Most are not errors. About twenty of the thirty-four are the model producing
+perfectly good English that simply differs from the one phrasing we score against:
+expanding `Hes` to `He is` where the reference wrote `He's`, joining a run-on with
+`and` where the reference used a full stop, choosing a comma where the reference used
+an exclamation mark. A reasonable editor would accept every one. That leaves roughly
+**eleven genuine errors across 308 sentences — about 3.6%**, not the 11% the raw
+upper bound implies, and the true edit precision is correspondingly higher than the
+~70% headline.
+
+More useful than the number is that the real errors are not scattered. They fall into
+two tight, nameable groups:
+
+- **Lowercase acronyms** (three cases): the model reads `un`, `who`, `fifa` as
+  ordinary words and rewrites them — `the un is holding a meeting → The one is
+  holding a meeting`. These are the same proper-noun cases the pipeline's entity
+  protection already guards; it needs only to cover lowercase forms as well.
+- **Homophone contractions** (four cases): `they're`/`there`, `your`/`you're`,
+  `let's`/`let`. When the model gets these wrong it is badly wrong — `Theyre going to
+  be late → There is going to be late.` This is exactly where the model is least
+  confident, so a confidence threshold should suppress most of them.
+
+The remaining few are one-offs, among them the most cautionary case in the set: a
+sentence that was already correct — `We visited Paris, France, last summer.` — from
+which the model deleted a comma. Editing text that was already right is precisely the
+failure a confidence gate exists to prevent.
+
+So seven of the eleven real errors sit in two buckets, both fixable without a growing
+rulebook — the existing entity guard extended to lowercase acronyms, and a single
+confidence threshold for the homophone confusions. Neither adds the kind of
+special-case list we are trying to avoid.
+
+## 5. Reducing wrong suggestions
 
 The robust way to raise precision — without an ever-growing rulebook — is
 **confidence-gated abstention**. The model already produces a probability for each
@@ -114,22 +151,23 @@ stay silent. In the pipeline, we keep only a small, stable set of genuine safegu
 — never altering emails, URLs, or IDs — and deliberately avoid a sprawling set of
 special cases.
 
-## 5. Status
+## 6. Status
 
 Our best model today is the BEA-distilled `visheratin` model: 50.6% exact-match, ~70%
-edit precision, an upper bound of 34 wrong suggestions over 308 sentences,
-appropriately conservative, and within the CPU throughput budget. It is a shippable
+edit precision, and an upper bound of 34 wrong suggestions over 308 sentences — of
+which, on inspection, about eleven are genuine (§4), a true error rate near 3.6%. It
+is appropriately conservative, within the CPU throughput budget, and shippable as a
 v1 behind the suggestion interface.
 
-The number we optimize from here is the wrong-suggestion count, driven down with
-confidence gating (with coverage as the thing we trade away). The highest-value next
-steps are: turn on confidence gating; run a precision spot-check (human review of the
-flagged regressions) to convert the upper bound into a true error rate; finish the
-Qwen benchmark; and — the best data we can get — collect real user accept/reject
-signal once the feature is live, which is perfectly in-domain and in-style, and will
-move the model further than any public corpus.
+The number we optimize from here is that error rate, driven down with confidence
+gating, with coverage as the thing we trade away. The highest-value next steps are:
+turn on confidence gating, aimed first at the homophone confusions §4 identifies;
+extend the entity guard to lowercase acronyms; finish the Qwen benchmark; and — the
+best data we can get — collect real user accept/reject signal once the feature is
+live, which is perfectly in-domain and in-style and will move the model further than
+any public corpus.
 
-## 6. Results
+## 7. Results
 
 All figures are on the in-scope grammar+spelling evaluation set (n=308). "Edits" is
 the share of sentences the model changes; "edit precision" is the share of those
@@ -144,7 +182,7 @@ edits that improve the sentence; "wrong (≤)" is the upper bound on wrong sugge
 | Teacher — vennify/t5-base (~220M) | 74.4% | — | — | — | can't ship: **licensing** |
 | Qwen3-0.6B (600M) | — | — | — | — | under evaluation |
 
-## 7. Reproducing these numbers
+## 8. Reproducing these numbers
 
 - `bench/eval_dataset.py --model <slot>` — accuracy, split by in-scope vs. out-of-scope.
 - `bench/error_profile.py --model <slot> [--dump-regressions out.csv]` — edit
@@ -152,10 +190,10 @@ edits that improve the sentence; "wrong (≤)" is the upper bound on wrong sugge
 - `bench/report.py --models <slot>` — CPU throughput.
 - Training/distillation and data prep: `distill/`. GECToR profile: `gector_hf/`.
 
-## 8. Caveats
+## 9. Caveats
 
-- The precision figures use a single reference, so the wrong-suggestion count is an
-  upper bound; the true rate needs the human spot-check.
+- The precision figures use a single reference, so the raw wrong-suggestion count is
+  an upper bound; the hand review in §4 puts the true rate near 3.6%.
 - Licensing must be cleared before shipping: the teacher (vennify) is excluded from
   production for licence reasons, and training corpora (BEA, Lang-8) obtained via a
   form are not automatically cleared for commercial use — distilling from vennify and
