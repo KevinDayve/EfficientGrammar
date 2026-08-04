@@ -30,7 +30,10 @@ Notes
   support (Hopper/Ada) or on-the-fly dequant; if transformers struggles with it,
   run that one under vLLM — the metric code here is model-agnostic and you can
   feed it predictions, but the built-in path uses transformers.
-* --quant {8bit,4bit} needs bitsandbytes:  pip install bitsandbytes
+* --quant {8bit,4bit} uses bitsandbytes (8bit = INT8 LLM.int8(), 4bit = NF4), so it
+  is INT-based, not FP8. Needs: pip install bitsandbytes. It is auto-skipped for a
+  checkpoint that is already quantized (e.g. an -FP8 model with FineGrainedFP8Config),
+  which loads via its own config — use --quant none there.
 """
 from __future__ import annotations
 
@@ -104,12 +107,24 @@ def load_core(csv_path: str) -> list[tuple[str, str]]:
 
 def build_model(args):
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+    # If the checkpoint is ALREADY quantized (e.g. an -FP8 model carries its own
+    # FineGrainedFP8Config), we must not stack a bitsandbytes config on top of it —
+    # transformers raises. Load it as-is and ignore --quant.
+    cfg = AutoConfig.from_pretrained(args.model_id, trust_remote_code=True)
+    prequant = getattr(cfg, "quantization_config", None)
 
     quant_cfg = None
-    if args.quant in ("8bit", "4bit"):
+    if prequant is not None:
+        method = (prequant.get("quant_method") if isinstance(prequant, dict)
+                  else getattr(prequant, "quant_method", "unknown"))
+        if args.quant != "none":
+            print(f"  note: '{args.model_id}' is already quantized ({method}); "
+                  f"ignoring --quant {args.quant} and loading it as-is.")
+    elif args.quant in ("8bit", "4bit"):
         from transformers import BitsAndBytesConfig
-        quant_cfg = BitsAndBytesConfig(
+        quant_cfg = BitsAndBytesConfig(       # bitsandbytes LLM.int8() / NF4 (INT-based)
             load_in_8bit=args.quant == "8bit",
             load_in_4bit=args.quant == "4bit",
             bnb_4bit_quant_type="nf4",
@@ -155,7 +170,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-id", default="Qwen/Qwen3-0.6B")
     ap.add_argument("--quant", choices=["none", "8bit", "4bit"], default="4bit",
-                    help="quantize on load; 'none' for an already-FP8 checkpoint")
+                    help="bitsandbytes quant on load (8bit=INT8 LLM.int8, 4bit=NF4); "
+                         "'none' loads as-is. Auto-ignored for already-quantized (FP8) checkpoints.")
     ap.add_argument("--device", default="auto", help="device_map (auto|cpu|cuda:0)")
     ap.add_argument("--csv", default="data/t5_8bit_fully_trained_check.csv")
     ap.add_argument("--batch-size", type=int, default=16)
