@@ -92,7 +92,7 @@ style is a liability.
 
 Management asked whether a general-purpose language model would simply make fewer
 mistakes than T5, and cleared Qwen3-0.6B for production, so we benchmarked it on the
-same set under the same metrics (8-bit quantized, raw model, no guards). The headline
+same set under the same metrics (int8-quantized, raw model, no guards). The headline
 looks competitive — 44.2% exact-match and ~70% edit precision over 26 flagged
 regressions — but reading those regressions tells a different and decisive story.
 
@@ -107,14 +107,24 @@ This is exactly the over-rewriting risk we anticipated, and at 0.6B a confidence
 cannot rescue it, because the model is *confidently* paraphrasing. So the language
 model was not less error-prone; on our mandate it was worse.
 
-The larger Qwen3-4B-Instruct-2507 (FP8) may behave differently — a bigger model tends
-to paraphrase more faithfully — so that benchmark is worth finishing. It is pending a
-runtime fix: the FP8 checkpoint needs a newer inference stack than the eval box had,
-and the quantization scales were silently dropped on load, producing garbage output
-rather than a real score. We will fold its numbers in once it runs cleanly. Throughput
-is a separate open question for both — a token-by-token decoder is a real risk against
-the CPU target, and the honest number needs an int8/GGUF conversion, not the GPU
-figure the benchmark prints.
+The larger Qwen3-4B-Instruct-2507 (native FP8, run under vLLM) reverses that verdict.
+It reaches **72.7% exact-match — essentially the vennify teacher's 74.4%** — at ~82%
+edit precision, and on a hand review only about seven of its 22 flagged regressions
+are genuine: a **~2.3% true rate, the lowest of any model here**, below the distilled
+T5's ~3.6%. The over-rewriting that sank the 0.6B is largely gone — no dropped clauses,
+no collapsed sentences. What remains is subtler: its signature mistake is fixing
+subject-verb agreement by changing the noun's number rather than the verb (`The books
+is on the shelf` → `The book is`, where the reference keeps `books` and fixes `are`),
+which is grammatical but quietly changes meaning. So scale did what management hoped —
+a bigger model makes fewer and milder mistakes — but only at 4B, not at 0.6B.
+
+The catch is entirely deployment, not quality. This is a 4B model in FP8 on a GPU — the
+opposite of the CPU, LLM-free premise the rest of this work is built on — and its
+throughput is still unmeasured: a token-by-token decoder, here on a Marlin FP8 kernel
+(the eval GPU predates native FP8), is the real risk against the throughput target, and
+a fair CPU number would need an int8/GGUF conversion, not the GPU figure the benchmark
+prints. The 4B is the strongest quality result we have; whether it can ship is a
+throughput-and-deployability question we have not yet answered.
 
 ## 4. A closer look at the wrong suggestions
 
@@ -171,19 +181,26 @@ special cases.
 
 ## 6. Status
 
-Our best model today is the BEA-distilled `visheratin` model: 50.6% exact-match, ~70%
-edit precision, and an upper bound of 34 wrong suggestions over 308 sentences — of
-which, on inspection, about eleven are genuine (§4), a true error rate near 3.6%. It
-is appropriately conservative, within the CPU throughput budget, and shippable as a
-v1 behind the suggestion interface.
+Our best *shippable* model today is the BEA-distilled `visheratin` model: 50.6%
+exact-match, ~70% edit precision, and an upper bound of 34 wrong suggestions over 308
+sentences — of which, on inspection, about eleven are genuine (§4), a true error rate
+near 3.6%. It is appropriately conservative, within the CPU throughput budget, and
+shippable as a v1 behind the suggestion interface.
 
-The number we optimize from here is that error rate, driven down with confidence
+Our best *quality* result is Qwen3-4B (§3.5): near the vennify teacher's accuracy and
+the lowest true error rate we have measured (~2.3%). It is not a shipping decision yet
+— it is a 4B GPU model, and whether it meets the throughput target on our hardware is
+unmeasured. It reframes the model-size question rather than settling it: the small
+distilled T5 remains the CPU-deployable choice, while the 4B is the bar to clear if we
+can afford to run it.
+
+The number we optimize from here is the error rate, driven down with confidence
 gating, with coverage as the thing we trade away. The highest-value next steps are:
 turn on confidence gating, aimed first at the homophone confusions §4 identifies;
-extend the entity guard to lowercase acronyms; finish the 4B Qwen benchmark (the 0.6B
-is done — it over-rewrites, §3.5); and — the best data we can get — collect real user
-accept/reject signal once the feature is live, which is perfectly in-domain and
-in-style and will move the model further than any public corpus.
+extend the entity guard to lowercase acronyms; measure the 4B's real throughput (an
+int8/GGUF conversion, not the GPU figure); and — the best data we can get — collect
+real user accept/reject signal once the feature is live, which is perfectly in-domain
+and in-style and will move the model further than any public corpus.
 
 ## 7. Results
 
@@ -198,8 +215,8 @@ edits that improve the sentence; "wrong (≤)" is the upper bound on wrong sugge
 | + raw Lang-8 | 42.5% | ~67% | 48% | 34 | wrong data style |
 | GECToR (roberta-base) | 36.7% | ~43% | 64% | 68 | worse + ~25× slower |
 | Teacher — vennify/t5-base (~220M) | 74.4% | — | — | — | can't ship: **licensing** |
-| Qwen3-0.6B (600M, 8-bit) | 44.2% | ~70% | 44% | 26 | over-rewrites; ~16 true errors |
-| Qwen3-4B-Instruct (FP8) | — | — | — | — | benchmark pending (FP8 runtime) |
+| Qwen3-0.6B (600M, int8) | 44.2% | ~70% | 44% | 26 | over-rewrites; ~16 true errors |
+| Qwen3-4B-Instruct (fp8) | 72.7% | ~82% | 74% | 22 | best quality; ~7 true; but 4B/GPU |
 
 ## 8. Reproducing these numbers
 
